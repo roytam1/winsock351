@@ -1,21 +1,58 @@
-// We can't avoid this when using maps
-#pragma warning(push)
-#pragma warning(disable:4786)
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "tree234.h"
+#ifdef __cplusplus
+}
+#endif
 
-#include <map>
 #include "events.h"
+#define snew(type) ((type *)malloc(sizeof(type)))
+#define sfree(ptr) free(ptr)
 
-std::map<SOCKET, WSAEventData> events;
+struct sockdata {
+    SOCKET sock;
+    WSAEventData data;
+};
+
+static int sockdata_find(void *av, void *bv)
+{
+    int *a = (int *)av;
+    struct sockdata *b = (struct sockdata *)bv;
+    if (*a < b->sock)
+        return -1;
+    if (*a > b->sock)
+        return +1;
+    return 0;
+}
+static int sockdata_compare(void *av, void *bv)
+{
+    struct sockdata *a = (struct sockdata *)av;
+    return sockdata_find(&a->sock, bv);
+}
+
+static tree234 *sockdatatree = NULL;
+
 HANDLE events_mutex;
 HINSTANCE events_instance;
 HWND events_window;
 static const char* events_window_name = "WINSOCK351";
 
 void SetEventData(SOCKET socket, const WSAEventData& data) {
+    struct sockdata *sd;
 	const DWORD wait_result = WaitForSingleObject(events_mutex, INFINITE);
+    if (!sockdatatree)
+        sockdatatree = newtree234(sockdata_compare);
+
 	switch (wait_result) {
 	case WAIT_OBJECT_0:
-		events[socket] = data;
+		sd = (struct sockdata *)find234(sockdatatree, &socket, sockdata_find);
+	    if (!sd) {
+            sd = snew(struct sockdata);
+            sd->sock = socket;
+        }
+        sd->data = data;
+        add234(sockdatatree, sd);
 		ReleaseMutex(events_mutex);
 	case WAIT_ABANDONED:
 		return;
@@ -23,13 +60,18 @@ void SetEventData(SOCKET socket, const WSAEventData& data) {
 }
 
 int GetEventData(SOCKET socket, WSAEventData* data) {
+    struct sockdata *sd;
 	const DWORD wait_result = WaitForSingleObject(events_mutex, INFINITE);
+    if (!sockdatatree)
+        sockdatatree = newtree234(sockdata_compare);
+
 	switch (wait_result) {
 	case WAIT_OBJECT_0:
-		if (events.find(socket) == events.end())
+		sd = (struct sockdata *)find234(sockdatatree, &socket, sockdata_find);
+	    if (!sd)
 			return -1;
 
-		*data = events[socket];
+		*data = sd->data;
 		ReleaseMutex(events_mutex);
 	case WAIT_ABANDONED:
 		return -1;
@@ -39,10 +81,14 @@ int GetEventData(SOCKET socket, WSAEventData* data) {
 }
 
 void DeleteEventData(SOCKET socket) {
+    struct sockdata *sd;
 	const DWORD wait_result = WaitForSingleObject(events_mutex, INFINITE);
+    if (!sockdatatree)
+        sockdatatree = newtree234(sockdata_compare);
 	switch (wait_result) {
 	case WAIT_OBJECT_0:
-		events.erase(socket);
+		sd = (struct sockdata *)find234(sockdatatree, &socket, sockdata_find);
+	    if (sd) del234(sockdatatree, sd);
 		ReleaseMutex(events_mutex);
 	case WAIT_ABANDONED:
 		return;
@@ -50,10 +96,14 @@ void DeleteEventData(SOCKET socket) {
 }
 
 void DeleteEvents() {
+    struct sockdata *sd;
 	const DWORD wait_result = WaitForSingleObject(events_mutex, INFINITE);
 	switch (wait_result) {
 	case WAIT_OBJECT_0:
-		events.clear();
+		while ((sd = (struct sockdata *)delpos234(sockdatatree, 0)) != NULL)
+		    sfree(sd); /* or some more complicated free function */
+		freetree234(sockdatatree);
+		sockdatatree = NULL;
 		ReleaseMutex(events_mutex);
 	case WAIT_ABANDONED:
 		return;
@@ -62,7 +112,7 @@ void DeleteEvents() {
 
 LRESULT CALLBACK EventsWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	if (uMsg > WM_USER) {
-		const WSAEVENT event = reinterpret_cast<WSAEVENT>(uMsg - WM_USER);
+		const WSAEVENT event = (WSAEVENT)(uMsg - WM_USER);
 		WSAEventData data;
 		int err = GetEventData(wParam, &data);
 		if (err != 0)
@@ -123,5 +173,3 @@ int CleanupEvents() {
 	UnregisterClass(events_window_name, NULL);
 	return 0;
 }
-
-#pragma warning(pop)
