@@ -1,7 +1,7 @@
-#include <cstdio>
 #include "winsock2.h"
 
 #ifdef _DEBUG
+#include <cstdio>
 void DebugLog(const char* fmt, ...) {
 	va_list args;
 	va_start(args, fmt);
@@ -81,12 +81,12 @@ int WSAAPI WINSOCK351_WSAEventSelect(SOCKET s, WSAEVENT hEventObject, long lNetw
 		s, hEventObject, lNetworkEvents);
 
 	// Check for overflow
-	if (WM_USER + reinterpret_cast<unsigned int>(hEventObject) < WM_USER) {
+	if (WM_USER + (unsigned int)(hEventObject) < WM_USER) {
 		WSASetLastError(WSAEINVAL);
 		return SOCKET_ERROR;
 	}
 
-	return WSAAsyncSelect(s, GetEventsWindow(), WM_USER + reinterpret_cast<unsigned int>(hEventObject), lNetworkEvents);
+	return WSAAsyncSelect(s, GetEventsWindow(), WM_USER + (unsigned int)(hEventObject), lNetworkEvents);
 }
 
 // STUB
