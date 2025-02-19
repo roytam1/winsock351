@@ -12,9 +12,14 @@
 #define PUTTY_DEFS_H
 
 #include <stddef.h>
+#ifndef _MSC_VER
 #include <stdint.h>
-#include <stdio.h>                     /* for __MINGW_PRINTF_FORMAT */
 #include <stdbool.h>
+#else
+#define bool int
+#define uintmax_t unsigned __int64
+#endif
+#include <stdio.h>                     /* for __MINGW_PRINTF_FORMAT */
 
 #if defined _MSC_VER && _MSC_VER < 1800
 /* Work around lack of inttypes.h and strtoumax in older MSVC */

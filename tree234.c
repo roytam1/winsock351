@@ -29,11 +29,12 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#include "defs.h"
+#include "ptydefs.h"
 #include "tree234.h"
 
-#ifdef TEST
-#define LOG(x) (printf x)
+#if 1//def TEST
+//#define LOG(x) (printf x)
+#define LOG(x)
 #define snew(type) ((type *)malloc(sizeof(type)))
 #define snewn(n, type) ((type *)malloc((n) * sizeof(type)))
 #define sresize(ptr, n, type)                                         \
