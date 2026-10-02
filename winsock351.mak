@@ -43,6 +43,7 @@ ALL : "$(OUTDIR)\ws2_32.dll"
 CLEAN :
 	-@erase "$(INTDIR)\events.obj"
 	-@erase "$(INTDIR)\main.obj"
+	-@erase "$(INTDIR)\tree234.obj"
 	-@erase "$(INTDIR)\vc60.idb"
 	-@erase "$(INTDIR)\winsock2.obj"
 	-@erase "$(OUTDIR)\ws2_32.dll"
@@ -65,7 +66,8 @@ DEF_FILE= \
 LINK32_OBJS= \
 	"$(INTDIR)\main.obj" \
 	"$(INTDIR)\winsock2.obj" \
-	"$(INTDIR)\events.obj"
+	"$(INTDIR)\events.obj" \
+	"$(INTDIR)\tree234.obj"
 
 "$(OUTDIR)\ws2_32.dll" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
     $(LINK32) @<<
@@ -86,6 +88,7 @@ ALL : "$(OUTDIR)\ws2_32.dll"
 CLEAN :
 	-@erase "$(INTDIR)\events.obj"
 	-@erase "$(INTDIR)\main.obj"
+	-@erase "$(INTDIR)\tree234.obj"
 	-@erase "$(INTDIR)\vc60.idb"
 	-@erase "$(INTDIR)\vc60.pdb"
 	-@erase "$(INTDIR)\winsock2.obj"
@@ -111,7 +114,8 @@ DEF_FILE= \
 LINK32_OBJS= \
 	"$(INTDIR)\main.obj" \
 	"$(INTDIR)\winsock2.obj" \
-	"$(INTDIR)\events.obj"
+	"$(INTDIR)\events.obj" \
+	"$(INTDIR)\tree234.obj"
 
 "$(OUTDIR)\ws2_32.dll" : "$(OUTDIR)" $(DEF_FILE) $(LINK32_OBJS)
     $(LINK32) @<<
@@ -169,6 +173,11 @@ SOURCE=.\events.cpp
 SOURCE=.\main.cpp
 
 "$(INTDIR)\main.obj" : $(SOURCE) "$(INTDIR)"
+
+
+SOURCE=.\tree234.c
+
+"$(INTDIR)\tree234.obj" : $(SOURCE) "$(INTDIR)"
 
 
 SOURCE=.\winsock2.cpp

@@ -1,5 +1,16 @@
 # Microsoft Developer Studio Generated Dependency File, included by winsock351.mak
 
+.\events.cpp : \
+	".\events.h"\
+	".\tree234.h"\
+
+.\main.cpp : \
+	".\events.h"\
+
+.\tree234.c : \
+	".\ptydefs.h"\
+	".\tree234.h"\
+
 .\winsock2.cpp : \
+	".\events.h"\
 	".\winsock2.h"\
-	
