@@ -229,15 +229,33 @@ int WSAAPI WINSOCK351_WSAIoctl(
 	return SOCKET_ERROR;
 }
 
+/* Compare Winsock versions packed as WORD (LOBYTE=major, HIBYTE=minor).
+ * Returns <0 / 0 / >0 like strcmp. */
+static int VersionCompare(WORD a, WORD b) {
+	if (LOBYTE(a) != LOBYTE(b))
+		return (LOBYTE(a) < LOBYTE(b)) ? -1 : 1;
+	if (HIBYTE(a) != HIBYTE(b))
+		return (HIBYTE(a) < HIBYTE(b)) ? -1 : 1;
+	return 0;
+}
+
 int WSAAPI WINSOCK351_WSAStartup(WORD wVersionRequested, LPWSADATA lpWSAData) {
 	int err;
 	LONG ref;
+	WORD wVersionToRequest;
 	DebugLog("WSAStartup: 0x%X", wVersionRequested);
 	if (lpWSAData == NULL) {
 		WSASetLastError(WSAEFAULT);
 		return WSAEFAULT;
 	}
-	err = WSAStartup(wVersionRequested, lpWSAData);
+	/* The underlying wsock32.dll only implements Winsock 1.1. Requesting
+	 * 2.x from it fails with WSAVERNOTSUPPORTED, which breaks apps (e.g.
+	 * PuTTY tries 2.2 first and would needlessly fall back). Clamp the
+	 * version we pass down, then spoof the reported version back up. */
+	wVersionToRequest = wVersionRequested;
+	if (VersionCompare(wVersionRequested, MAKEWORD(1, 1)) > 0)
+		wVersionToRequest = MAKEWORD(1, 1);
+	err = WSAStartup(wVersionToRequest, lpWSAData);
 	if (err != 0)
 		return err;
 	ref = InterlockedIncrement(&g_startup_ref);
@@ -252,6 +270,9 @@ int WSAAPI WINSOCK351_WSAStartup(WORD wVersionRequested, LPWSADATA lpWSAData) {
 	}
 	/* Spoof the version returned so 2.x apps don't bail out. */
 	lpWSAData->wVersion = wVersionRequested;
+	/* Some apps also check wHighVersion; never report less than asked for. */
+	if (VersionCompare(lpWSAData->wHighVersion, wVersionRequested) < 0)
+		lpWSAData->wHighVersion = wVersionRequested;
 	return 0;
 }
 
