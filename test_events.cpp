@@ -685,6 +685,52 @@ done:
     PumpMessagesBriefly(100);
 }
 
+/* T14: plink regression - event must signal with NO message pumping at all.
+ * Old design created the WSAAsyncSelect window on the app thread, so a
+ * console app doing plain WaitForSingleObject would stall forever. The
+ * helper thread owns the window and pumps it, so this must succeed. */
+static void T14_NoPumpWait(void)
+{
+    struct sockaddr_in a;
+    SOCKET l, c;
+    WSAEVENT_T e;
+    TEST_WSANETWORKEVENTS nev;
+    DWORD w;
+    int r;
+
+    l = CreateListener(&a);
+    CHECK(l != INVALID_SOCKET, "T14 listener");
+    if (l == INVALID_SOCKET) return;
+    e = pWSACreateEvent();
+    CHECK(e != NULL, "T14 create event");
+    if (!e) { p_closesocket(l); return; }
+    CHECK(pWSAEventSelect(l, e, FD_ACCEPT) == 0, "T14 EventSelect ACCEPT");
+
+    c = p_socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(c != INVALID_SOCKET, "T14 client");
+    if (c == INVALID_SOCKET) { pWSACloseEvent(e); p_closesocket(l); return; }
+    r = p_connect(c, (struct sockaddr*)&a, sizeof(a));
+    CHECK(r == 0, "T14 connect");
+
+    /* Deliberately NO PeekMessage/DispatchMessage here. */
+    w = WaitForSingleObject(e, 5000);
+    CHECK(w == WAIT_OBJECT_0, "T14 FD_ACCEPT signaled without pumping");
+
+    memset(&nev, 0, sizeof(nev));
+    r = pWSAEnumNetworkEvents(l, e, &nev);
+    CHECK(r == 0 && (nev.lNetworkEvents & FD_ACCEPT), "T14 Enum shows ACCEPT");
+
+    p_closesocket(c);
+    {
+        struct sockaddr_in peer;
+        int len = sizeof(peer);
+        SOCKET tmp = p_accept(l, (struct sockaddr*)&peer, &len);
+        if (tmp != INVALID_SOCKET) p_closesocket(tmp);
+    }
+    pWSACloseEvent(e);
+    p_closesocket(l);
+}
+
 int main(void)
 {
     if (!LoadLocalDll())
@@ -703,6 +749,7 @@ int main(void)
     T11_CloseFlow();
     T12_ClosesocketCleanup();
     T13_Isolation();
+    T14_NoPumpWait();
 
     /* final listener cleanup from T07 */
     if (g_listen != INVALID_SOCKET) {
