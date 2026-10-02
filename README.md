@@ -10,60 +10,65 @@ The following is the list of Winsock 2 exclusive functions that are supported by
 - :warning: **Partial support**
 - :x: **Not supported yet**
 
-| Ordinal | Function                        | Support            | Notes                               |
-|---------|---------------------------------|--------------------|-------------------------------------|
-| 7       | `getsockopt`                    | :warning:          | May have Winsock2-exclusive opts    |
-| 10      | `ioctlsocket`                   | :warning:          | May have Winsock2-exclusive cmds    |
-| 21      | `setsockopt`                    | :warning:          | May have Winsock2-exclusive opts    |
-| 24      | `WSApSetPostRoutine`            | :x:                |                                     |
-| 25      | `FreeAddrInfoEx`                | :x:                |                                     |
-| 26      | `FreeAddrInfoExW`               | :x:                |                                     |
-| 27      | `FreeAddrInfoW`                 | :x:                |                                     |
-| 28      | `GetAddrInfoExA`                | :x:                |                                     |
-| 29      | `GetAddrInfoExCancel`           | :x:                |                                     |
-| 30      | `GetAddrInfoExOverlappedResult` | :x:                |                                     |
-| 31      | `GetAddrInfoExW`                | :x:                |                                     |
-| 32      | `GetAddrInfoW`                  | :x:                |                                     |
-| 33      | `GetHostNameW`                  | :x:                |                                     |
-| 34      | `GetNameInfoW`                  | :x:                |                                     |
-| 35      | `InetNtopW`                     | :x:                |                                     |
-| 36      | `InetPtonW`                     | :x:                |                                     |
-| 37      | `SetAddrInfoExA`                | :x:                |                                     |
-| 38      | `SetAddrInfoExW`                | :x:                |                                     |
-| 41      | `WSAAccept`                     | :x:                |                                     |
-| 42      | `WSAAddressToStringA`           | :x:                |                                     |
-| 43      | `WSAAddressToStringW`           | :x:                |                                     |
-| 45      | `WSACloseEvent`                 | :heavy_check_mark: |                                     |
-| 46      | `WSAConnect`                    | :x:                |                                     |
-| 47      | `WSAConnectByList`              | :x:                |                                     |
-| 48      | `WSAConnectByNameA`             | :x:                |                                     |
-| 49      | `WSAConnectByNameW`             | :x:                |                                     |
-| 50      | `WSACreateEvent`                | :heavy_check_mark: |                                     |
-| 64      | `WSAEnumNetworkEvents`          | :heavy_check_mark: |                                     |
-| 67      | `WSAEventSelect`                | :heavy_check_mark: | Implemented around `WSAAsyncSelect` |
-| 74      | `WSAHtonl`                      | :x:                |                                     |
-| 75      | `WSAHtons`                      | :x:                |                                     |
-| 78      | `WSAIoctl`                      | :x:                | Stubbed                             |
-| 86      | `WSANtohl`                      | :x:                |                                     |
-| 87      | `WSANtohs`                      | :x:                |                                     |
-| 88      | `WSAPoll`                       | :x:                |                                     |
-| 91      | `WSARecv`                       | :x:                |                                     |
-| 92      | `WSARecvDisconnect`             | :x:                |                                     |
-| 93      | `WSARecvFrom`                   | :x:                |                                     |
-| 95      | `WSAResetEvent`                 | :heavy_check_mark: |                                     |
-| 96      | `WSASend`                       | :x:                |                                     |
-| 97      | `WSASendDisconnect`             | :x:                |                                     |
-| 98      | `WSASendMsg`                    | :x:                |                                     |
-| 99      | `WSASendTo`                     | :x:                |                                     |
-| 100     | `WSASetEvent`                   | :heavy_check_mark: |                                     |
-| 119     | `WSASocketA`                    | :x:                |                                     |
-| 119     | `WSASocketw`                    | :x:                |                                     |
-| 120     | `WSAAddressToStringA`           | :x:                |                                     |
-| 121     | `WSAStringToAddressW`           | :x:                |                                     |
-| 124     | `WSAWaitForMultipleEvents`      | :heavy_check_mark: |                                     |
-| 175     | `freeaddrinfo`                  | :x:                | Stubbed                             |
-| 176     | `getaddrinfo`                   | :x:                | Stubbed                             |
-| 177     | `getnameinfo`                   | :x:                |                                     |
+| Ordinal | Function                        | Support            | Notes                                                    |
+|---------|---------------------------------|--------------------|----------------------------------------------------------|
+| 3       | `closesocket`                   | :heavy_check_mark: | Wrapper to clean up `WSAEventSelect` state               |
+| 7       | `getsockopt`                    | :warning:          | May have Winsock2-exclusive opts                         |
+| 10      | `ioctlsocket`                   | :warning:          | May have Winsock2-exclusive cmds                         |
+| 21      | `setsockopt`                    | :warning:          | May have Winsock2-exclusive opts                         |
+| 24      | `WSApSetPostRoutine`            | :warning:          | Exported stub (`WSAEOPNOTSUPP`)                          |
+| 25      | `FreeAddrInfoEx`                | :heavy_check_mark: | Same as `freeaddrinfo`                                   |
+| 26      | `FreeAddrInfoExW`               | :heavy_check_mark: | Same as `freeaddrinfo`                                   |
+| 27      | `FreeAddrInfoW`                 | :heavy_check_mark: | Same as `freeaddrinfo`                                   |
+| 28      | `GetAddrInfoExA`                | :warning:          | Sync path only, async returns `WSAEOPNOTSUPP`             |
+| 29      | `GetAddrInfoExCancel`           | :warning:          | Exported stub (`WSAEOPNOTSUPP`)                          |
+| 30      | `GetAddrInfoExOverlappedResult` | :warning:          | Exported stub (`WSAEOPNOTSUPP`)                          |
+| 31      | `GetAddrInfoExW`                | :warning:          | Sync path only, async returns `WSAEOPNOTSUPP`             |
+| 32      | `GetAddrInfoW`                  | :heavy_check_mark: | IPv4 via `gethostbyname`, no IPv6                        |
+| 33      | `GetHostNameW`                  | :heavy_check_mark: | Thunk to `gethostname`                                   |
+| 34      | `GetNameInfoW`                  | :heavy_check_mark: | IPv4 via `gethostbyaddr`/`getservbyport`                 |
+| 35      | `InetNtopW`                     | :heavy_check_mark: | IPv4 only                                                |
+| 36      | `InetPtonW`                     | :heavy_check_mark: | IPv4 only                                                |
+| 37      | `SetAddrInfoExA`                | :warning:          | Exported stub (`WSAEOPNOTSUPP`)                          |
+| 38      | `SetAddrInfoExW`                | :warning:          | Exported stub (`WSAEOPNOTSUPP`)                          |
+| 41      | `WSAAccept`                     | :warning:          | Around `accept`, condition callback ignored              |
+| 42      | `WSAAddressToStringA`           | :heavy_check_mark: | IPv4 only                                                |
+| 43      | `WSAAddressToStringW`           | :heavy_check_mark: | IPv4 only                                                |
+| 45      | `WSACloseEvent`                 | :heavy_check_mark: |                                                          |
+| 46      | `WSAConnect`                    | :heavy_check_mark: | Around `connect`, QoS/caller data ignored                |
+| 47      | `WSAConnectByList`              | :warning:          | Best-effort first-address `connect`                      |
+| 48      | `WSAConnectByNameA`             | :heavy_check_mark: | Via `getaddrinfo` + `connect` loop                       |
+| 49      | `WSAConnectByNameW`             | :heavy_check_mark: | Thunk to `WSAConnectByNameA`                             |
+| 50      | `WSACreateEvent`                | :heavy_check_mark: |                                                          |
+| 64      | `WSAEnumNetworkEvents`          | :heavy_check_mark: | Now copies `iErrorCode[]` and auto-resets                |
+| 67      | `WSAEventSelect`                | :heavy_check_mark: | Implemented around `WSAAsyncSelect`                      |
+| 74      | `WSAHtonl`                      | :heavy_check_mark: |                                                          |
+| 75      | `WSAHtons`                      | :heavy_check_mark: |                                                          |
+| 78      | `WSAIoctl`                      | :warning:          | Exported stub (`WSAEOPNOTSUPP`)                          |
+| 86      | `WSANtohl`                      | :heavy_check_mark: |                                                          |
+| 87      | `WSANtohs`                      | :heavy_check_mark: |                                                          |
+| 88      | `WSAPoll`                       | :heavy_check_mark: | Emulated via `select`                                    |
+| 91      | `WSARecv`                       | :warning:          | Blocking fallback, overlapped unsupported                |
+| 92      | `WSARecvDisconnect`             | :heavy_check_mark: | Via `shutdown(SD_RECEIVE)`                                 |
+| 93      | `WSARecvFrom`                   | :warning:          | Blocking fallback, overlapped unsupported                |
+| 95      | `WSAResetEvent`                 | :heavy_check_mark: |                                                          |
+| 96      | `WSASend`                       | :warning:          | Blocking fallback, overlapped unsupported                |
+| 97      | `WSASendDisconnect`             | :heavy_check_mark: | Via `shutdown(SD_SEND)`                                    |
+| 98      | `WSASendMsg`                    | :warning:          | Via `WSASendTo`, ancillary data ignored                  |
+| 99      | `WSASendTo`                     | :warning:          | Blocking fallback, overlapped unsupported                |
+| 100     | `WSASetEvent`                   | :heavy_check_mark: |                                                          |
+| 117     | `WSAStringToAddressA`           | :heavy_check_mark: | IPv4 only                                                |
+| 118     | `WSAStringToAddressW`           | :heavy_check_mark: | IPv4 only                                                |
+| 119     | `WSASocketA`                    | :warning:          | Around `socket`, `lpProtocolInfo` partially used         |
+| 120     | `WSASocketW`                    | :warning:          | Around `socket`, `lpProtocolInfo` partially used         |
+| 124     | `WSAWaitForMultipleEvents`      | :heavy_check_mark: |                                                          |
+| 175     | `freeaddrinfo`                  | :heavy_check_mark: | IPv4 via `gethostbyname`, no IPv6                        |
+| 176     | `getaddrinfo`                   | :heavy_check_mark: | IPv4 via `gethostbyname`, no IPv6                        |
+| 177     | `getnameinfo`                   | :heavy_check_mark: | IPv4 via `gethostbyaddr`/`getservbyport`                 |
+| (none)  | `inet_ntop` / `inet_pton`       | :heavy_check_mark: | IPv4 only                                                |
+| (none)  | `WSAEnumProtocolsA/W`           | :heavy_check_mark: | Hardcoded TCP+UDP over IPv4                              |
+| (none)  | `WSAGetOverlappedResult` etc.   | :warning:          | Exported stubs (`WSAEOPNOTSUPP`/`WSASERVICE_NOT_FOUND`)  |
+| (none)  | `WSC*` / `WPU*`                 | :warning:          | Exported stubs so apps load                               |
 
 ## Usage
 
