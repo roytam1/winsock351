@@ -39,6 +39,14 @@ static tree234 *sockdatatree = NULL;
 HANDLE events_mutex;
 HINSTANCE events_instance;
 HWND events_window;
+
+/* The WSAAsyncSelect notifications must be dispatched on the thread that owns
+ * the window. Console apps (e.g. plink) never pump messages, so the window
+ * lives on a dedicated helper thread with its own message loop. */
+static HANDLE events_thread = NULL;
+static DWORD events_thread_id = 0;
+static HANDLE events_ready = NULL; /* manual-reset: signaled when window up/failed */
+static DWORD events_startup_err = 0;
 static const char* events_window_name = "WINSOCK351";
 
 void SetEventData(SOCKET socket, const WSAEventData& data) {
@@ -211,59 +219,131 @@ HWND GetEventsWindow() {
 	return events_window;
 }
 
+/* Helper-thread entry: creates the notification window, then pumps messages
+ * until WM_QUIT. Runs on its own thread so console apps that never call
+ * GetMessage/DispatchMessage still get their WSAEVENTs signaled. */
+static DWORD WINAPI EventsThreadProc(LPVOID param) {
+	MSG msg;
+	(void)param;
+
+	events_window = CreateWindow(events_window_name, "", WS_POPUP,
+		0, 0, 0, 0, NULL, NULL, events_instance, NULL);
+	if (events_window == NULL)
+		events_startup_err = GetLastError();
+	SetEvent(events_ready);
+
+	if (events_window == NULL)
+		return 1;
+
+	while (GetMessage(&msg, NULL, 0, 0) > 0) {
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
+
+	/* Tear down our own window; class/mutex are handled by CleanupEvents. */
+	DestroyWindow(events_window);
+	events_window = NULL;
+	return 0;
+}
+
 int StartupEvents() {
+	HANDLE thread;
+	DWORD tid;
+
 	/* Do not create owned mutex: first waiter must not inherit ownership. */
 	events_mutex = CreateMutex(NULL, FALSE, NULL);
 	if (events_mutex == NULL)
 		return GetLastError();
 
-	// In order to receive WSAAsync events locally we will create an
-	// invisible window to receive those messages
-	// HWND_MESSAGE didn't exist on NT 3.51 so we have to do it this way
-	WNDCLASS wc;
+	// In order to receive WSAAsync events we need a window to receive those
+	// messages. HWND_MESSAGE didn't exist on NT 3.51 so we create an
+	// invisible WS_POPUP window. It must live on a thread with a message
+	// loop, and console apps never pump messages, so use a helper thread.
 
-	memset(&wc, 0, sizeof(wc));
-
-	// Register the main window class
-	wc.style = 0;
-	wc.lpfnWndProc = EventsWndProc;
-	wc.cbClsExtra = 0;
-	wc.cbWndExtra = 0;
-	wc.hInstance = events_instance;
-	wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hbrBackground = NULL;
-	wc.lpszMenuName =  NULL;
-	wc.lpszClassName = events_window_name;
-	if (!RegisterClass(&wc)) {
-		DWORD err = GetLastError();
-		/* Already registered (e.g. second WSAStartup without cleanup)? */
-		if (err != ERROR_CLASS_ALREADY_EXISTS) {
-			CloseHandle(events_mutex);
-			events_mutex = NULL;
-			return err;
+	// Register the window class (process-wide, any thread may do this).
+	{
+		WNDCLASS wc;
+		memset(&wc, 0, sizeof(wc));
+		wc.style = 0;
+		wc.lpfnWndProc = EventsWndProc;
+		wc.cbClsExtra = 0;
+		wc.cbWndExtra = 0;
+		wc.hInstance = events_instance;
+		wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+		wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+		wc.hbrBackground = NULL;
+		wc.lpszMenuName =  NULL;
+		wc.lpszClassName = events_window_name;
+		if (!RegisterClass(&wc)) {
+			DWORD err = GetLastError();
+			/* Already registered (e.g. second WSAStartup without cleanup)? */
+			if (err != ERROR_CLASS_ALREADY_EXISTS) {
+				CloseHandle(events_mutex);
+				events_mutex = NULL;
+				return err;
+			}
 		}
 	}
-	events_window = CreateWindow(events_window_name, "", WS_POPUP,
-		0, 0, 0, 0, NULL, NULL, events_instance, NULL);
-	if (events_window == NULL) {
+
+	events_ready = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (events_ready == NULL) {
 		DWORD err = GetLastError();
 		CloseHandle(events_mutex);
 		events_mutex = NULL;
 		return err;
 	}
+	events_startup_err = 0;
+	events_window = NULL;
+
+	thread = CreateThread(NULL, 0, EventsThreadProc, NULL, 0, &tid);
+	if (thread == NULL) {
+		DWORD err = GetLastError();
+		CloseHandle(events_ready);
+		events_ready = NULL;
+		CloseHandle(events_mutex);
+		events_mutex = NULL;
+		return err;
+	}
+	/* Wait until the helper thread has created the window (or failed). */
+	WaitForSingleObject(events_ready, INFINITE);
+	CloseHandle(events_ready);
+	events_ready = NULL;
+
+	if (events_startup_err != 0) {
+		CloseHandle(thread);
+		CloseHandle(events_mutex);
+		events_mutex = NULL;
+		return events_startup_err;
+	}
+
+	/* Hand over ownership; CleanupEvents() will stop the thread. */
+	events_thread = thread;
+	events_thread_id = tid;
 
 	return 0;
 }
 
 int CleanupEvents() {
-	/* Order: window first (no more messages), then tree, then mutex. */
-	if (events_window != NULL) {
+	/* Stop the helper thread first so no more messages arrive. */
+	if (events_thread != NULL) {
+		/* The thread owns the window and destroys it before exiting. */
+		PostThreadMessage(events_thread_id, WM_QUIT, 0, 0);
+		WaitForSingleObject(events_thread, 5000);
+		CloseHandle(events_thread);
+		events_thread = NULL;
+		events_thread_id = 0;
+		events_window = NULL;
+	} else if (events_window != NULL) {
+		/* Paranoia: window without thread (shouldn't happen). */
 		DestroyWindow(events_window);
 		events_window = NULL;
 	}
 	UnregisterClass(events_window_name, events_instance);
 	DeleteEvents();
+	if (events_ready != NULL) {
+		CloseHandle(events_ready);
+		events_ready = NULL;
+	}
 	if (events_mutex != NULL) {
 		if (!CloseHandle(events_mutex))
 			return GetLastError();
