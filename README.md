@@ -41,7 +41,7 @@ The following is the list of Winsock 2 exclusive functions that are supported by
 | 49      | `WSAConnectByNameW`             | :heavy_check_mark: | Thunk to `WSAConnectByNameA`                             |
 | 50      | `WSACreateEvent`                | :heavy_check_mark: |                                                          |
 | 64      | `WSAEnumNetworkEvents`          | :heavy_check_mark: | Now copies `iErrorCode[]` and auto-resets                |
-| 67      | `WSAEventSelect`                | :heavy_check_mark: | Implemented around `WSAAsyncSelect`                      |
+| 67      | `WSAEventSelect`                | :heavy_check_mark: | Around `WSAAsyncSelect` via helper thread (no app message pump needed) |
 | 74      | `WSAHtonl`                      | :heavy_check_mark: |                                                          |
 | 75      | `WSAHtons`                      | :heavy_check_mark: |                                                          |
 | 78      | `WSAIoctl`                      | :warning:          | Exported stub (`WSAEOPNOTSUPP`)                          |
