@@ -31,7 +31,21 @@ typedef ULONG SERVICETYPE;
 #define SO_GROUP_ID 0x2005
 #define SO_GROUP_PRIORITY 0x2006
 #define SO_PROTOCOL_INFOA 0x2004
+/* NOTE: real ws2 header has SO_PROTOCOL_INFOW==0x2005 which collides with
+   SO_GROUP_ID; keep same value for compat but never switch() on both. */
+#ifndef SO_PROTOCOL_INFOW
 #define SO_PROTOCOL_INFOW 0x2005
+#endif
+
+#ifndef WSASERVICE_NOT_FOUND
+#define WSASERVICE_NOT_FOUND 10108
+#endif
+#ifndef WSATYPE_NOT_FOUND
+#define WSATYPE_NOT_FOUND 10109
+#endif
+#ifndef WSA_NOT_ENOUGH_MEMORY
+#define WSA_NOT_ENOUGH_MEMORY 8
+#endif
 
 #ifndef FD_QOS
 #define FD_QOS 0x40
@@ -161,6 +175,7 @@ typedef struct _GUID {
     unsigned short Data3;
     unsigned char Data4[8];
 } GUID;
+typedef GUID FAR * LPGUID;
 #endif
 
 #ifndef MAX_PROTOCOL_CHAIN

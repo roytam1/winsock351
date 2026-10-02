@@ -96,24 +96,12 @@ int WSAAPI WINSOCK351_closesocket(SOCKET s) {
 
 int WSAAPI WINSOCK351_getsockopt(SOCKET s, int level, int optname, char* optval, int* optlen) {
 	DebugLog("getsockopt: socket: %d, level: 0x%X, optname: 0x%X", s, level, optname);
-	/* Winsock2-only opts have no NT 3.51 equivalent; fail fast. */
-	switch (optname) {
-	case SO_GROUP_ID:
-	case SO_GROUP_PRIORITY:
-	case SO_PROTOCOL_INFOA:
-#ifdef SO_PROTOCOL_INFOW
-	case SO_PROTOCOL_INFOW:
-#endif
-		/* SO_PROTOCOL_INFOA == 0x2004 overlaps; avoid double case */
-		break;
-	default:
-		break;
-	}
-	if ((optname == SO_GROUP_ID || optname == SO_GROUP_PRIORITY)
-#ifdef SO_PROTOCOL_INFOW
-		|| optname == SO_PROTOCOL_INFOW
-#endif
-		) {
+	/* Winsock2-only opts have no NT 3.51 equivalent; fail fast.
+	   NOTE: SO_PROTOCOL_INFOW (0x2005) == SO_GROUP_ID, so use if-chain. */
+	if (optname == SO_GROUP_ID || optname == SO_GROUP_PRIORITY
+		|| optname == SO_PROTOCOL_INFOA || optname == SO_PROTOCOL_INFOW) {
+		/* SO_PROTOCOL_INFOA is the only one we could theoretically support;
+		   wsock32 1.1 has no protocol-info, so fail for all for now. */
 		WSASetLastError(WSAENOPROTOOPT);
 		return SOCKET_ERROR;
 	}
@@ -133,7 +121,8 @@ int WSAAPI WINSOCK351_select(int nfds, fd_set* readfds, fd_set* writefds, fd_set
 
 int WSAAPI WINSOCK351_setsockopt(SOCKET s, int level, int optname, const char* optval, int optlen) {
 	DebugLog("setsockopt: socket: %d, level: 0x%X, optname: 0x%X", s, level, optname);
-	if (optname == SO_GROUP_ID || optname == SO_GROUP_PRIORITY) {
+	if (optname == SO_GROUP_ID || optname == SO_GROUP_PRIORITY
+		|| optname == SO_PROTOCOL_INFOA || optname == SO_PROTOCOL_INFOW) {
 		WSASetLastError(WSAENOPROTOOPT);
 		return SOCKET_ERROR;
 	}
@@ -946,10 +935,7 @@ int WSAAPI WINSOCK351_getaddrinfo(const char FAR * pNodeName, const char FAR * p
 		if (socktype == 0) {
 			/* Return both TCP and UDP entries like stock getaddrinfo. */
 			LPADDRINFOA ai2 = NULL;
-			ADDRINFOA tmp = hints ? *hints : *(LPADDRINFOA)0;
-			/* Build second entry manually to avoid touching hints==NULL. */
 			struct sockaddr_in sin2 = sin;
-			(void)tmp;
 			/* ai already has protocol defaulted; clone and flip. */
 			ai2 = (LPADDRINFOA)malloc(sizeof(*ai2));
 			if (ai2 == NULL) {
@@ -964,6 +950,7 @@ int WSAAPI WINSOCK351_getaddrinfo(const char FAR * pNodeName, const char FAR * p
 				return EAI_MEMORY;
 			}
 			memcpy(ai2->ai_addr, &sin2, sizeof(sin2));
+			ai2->ai_canonname = NULL;
 			ai2->ai_next = NULL;
 			ai->ai_next = NULL;
 			if (ai->ai_socktype == 0) {

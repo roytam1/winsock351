@@ -5,6 +5,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 	switch (fdwReason) {
 	case DLL_PROCESS_ATTACH:
 		SetEventsInstance(hinstDLL);
+		DisableThreadLibraryCalls(hinstDLL);
 		break;
 	case DLL_THREAD_ATTACH:
 		break;
@@ -14,7 +15,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 		if (lpvReserved != NULL) {
 			break;
 		}
-
+		/* App exited without WSACleanup: don't leak window/mutex. */
+		CleanupEvents();
 		break;
 	}
 
