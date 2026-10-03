@@ -78,6 +78,10 @@ In order to use this library, you can simply drop it on the same path as the tar
 
 At the moment Visual C++ 6.0 is required to build the project, but Visual C++ 4.2 support may be considered in the future.
 
+## Debugging
+
+Build with `_DEBUG` (or `DEBUG`) defined and the DLL appends a trace to `%TEMP%\WINSOCK351.LOG` (entry parameters plus return codes for `WSAStartup`, `WSAEventSelect`, `WSAEnumNetworkEvents`). Delete the file before each run.
+
 ## Supported systems
 
 `winsock351` has only been tested under Windows NT 3.51, but other systems such as early versions of Windows 95 may work too.

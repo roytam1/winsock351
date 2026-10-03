@@ -1,6 +1,8 @@
 #include <windows.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -12,6 +14,33 @@ extern "C" {
 #include "events.h"
 #define snew(type) ((type *)malloc(sizeof(type)))
 #define sfree(ptr) free(ptr)
+
+#if defined(_DEBUG) || defined(DEBUG)
+/* Same trace file as winsock2.cpp DebugLog: proves async messages arrive. */
+static void EventLog(const char* fmt, ...) {
+	va_list args;
+	char buf[256];
+	char tmp[MAX_PATH];
+	char path[MAX_PATH];
+	FILE* f;
+	va_start(args, fmt);
+	_vsnprintf(buf, sizeof(buf) - 1, fmt, args);
+	buf[sizeof(buf) - 1] = '\0';
+	va_end(args);
+	tmp[0] = '\0';
+	if (GetTempPath(sizeof(tmp), tmp) == 0 || tmp[0] == '\0')
+		strcpy(tmp, ".\\");
+	_snprintf(path, sizeof(path) - 1, "%sWINSOCK351.LOG", tmp);
+	path[sizeof(path) - 1] = '\0';
+	f = fopen(path, "a");
+	if (f != NULL) {
+		fprintf(f, "[%lu] %s\n", GetTickCount(), buf);
+		fclose(f);
+	}
+}
+#else
+#define EventLog (void)0
+#endif
 
 struct sockdata {
     SOCKET sock;
@@ -47,6 +76,9 @@ static HANDLE events_thread = NULL;
 static DWORD events_thread_id = 0;
 static HANDLE events_ready = NULL; /* manual-reset: signaled when window up/failed */
 static DWORD events_startup_err = 0;
+/* Set by CleanupEvents; polled by the helper loop. Plain LONG + aligned
+ * access is atomic on x86; set uses InterlockedExchange. */
+static volatile LONG events_stop = 0;
 static const char* events_window_name = "WINSOCK351";
 
 void SetEventData(SOCKET socket, const WSAEventData& data) {
@@ -181,14 +213,68 @@ static int EventBitToIndex(long eventBit) {
 	}
 }
 
+/* WSAAsyncSelect message ids. HANDLE values must not be baked into window
+ * messages (WM_USER+HANDLE can leave the user-message range and be rejected,
+ * e.g. NT 3.51 handle values). Instead each distinct WSAEVENT gets a small
+ * dense id; the async message is WM_USER+id. Entries are never freed: apps
+ * use few events, and freeing would risk id reuse against live selects. */
+#define MAX_EVENT_MSGIDS 1024
+static WSAEVENT event_msg_handles[MAX_EVENT_MSGIDS];
+static UINT event_msg_count = 0; /* ids are index+1; 0 means "none" */
+
+UINT EventMsgIdForHandle(WSAEVENT hEvent) {
+	UINT i;
+	UINT id = 0;
+	if (hEvent == NULL)
+		return 0;
+	if (events_mutex == NULL)
+		return 0;
+	if (WaitForSingleObject(events_mutex, INFINITE) == WAIT_FAILED)
+		return 0;
+	for (i = 0; i < event_msg_count; i++) {
+		if (event_msg_handles[i] == hEvent) {
+			id = i + 1;
+			break;
+		}
+	}
+	if (id == 0) {
+		if (event_msg_count >= MAX_EVENT_MSGIDS) {
+			ReleaseMutex(events_mutex);
+			return 0;
+		}
+		event_msg_handles[event_msg_count] = hEvent;
+		event_msg_count++;
+		id = event_msg_count;
+	}
+	ReleaseMutex(events_mutex);
+	return id;
+}
+
+WSAEVENT EventHandleForMsgId(UINT id) {
+	WSAEVENT h = NULL;
+	if (id == 0 || id > MAX_EVENT_MSGIDS)
+		return NULL;
+	if (events_mutex == NULL)
+		return NULL;
+	if (WaitForSingleObject(events_mutex, INFINITE) == WAIT_FAILED)
+		return NULL;
+	if (id <= event_msg_count)
+		h = event_msg_handles[id - 1];
+	ReleaseMutex(events_mutex);
+	return h;
+}
+
 LRESULT CALLBACK EventsWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	if (uMsg > WM_USER) {
-		const WSAEVENT event = (WSAEVENT)(uMsg - WM_USER);
+		WSAEVENT event = EventHandleForMsgId((UINT)(uMsg - WM_USER));
 		WSAEventData data;
 		long netEvent;
 		int netError;
 		int idx;
 		SOCKET s = (SOCKET)wParam;
+
+		if (event == NULL)
+			return DefWindowProc(hWnd, uMsg, wParam, lParam);
 
 		memset(&data, 0, sizeof(data));
 		/* First event for this socket has no entry yet: don't drop it. */
@@ -196,6 +282,8 @@ LRESULT CALLBACK EventsWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPara
 
 		netEvent = WSAGETSELECTEVENT(lParam);
 		netError = WSAGETSELECTERROR(lParam);
+		EventLog("EventsWndProc: sock=%d msg=0x%X ev=0x%X err=%d",
+			s, uMsg, netEvent, netError);
 		data.lNetworkEvents |= netEvent;
 		/* lParam carries one event+error per message; store per-event error. */
 		idx = EventBitToIndex(netEvent);
@@ -220,8 +308,12 @@ HWND GetEventsWindow() {
 }
 
 /* Helper-thread entry: creates the notification window, then pumps messages
- * until WM_QUIT. Runs on its own thread so console apps that never call
- * GetMessage/DispatchMessage still get their WSAEVENTs signaled. */
+ * until told to stop. Runs on its own thread so console apps that never call
+ * GetMessage/DispatchMessage still get their WSAEVENTs signaled.
+ *
+ * Uses PeekMessage/WaitMessage (not GetMessage): every exit path is explicit
+ * and logged, so a spontaneously-dying helper can't silently break event
+ * delivery the way a GetMessage <= 0 return would. */
 static DWORD WINAPI EventsThreadProc(LPVOID param) {
 	MSG msg;
 	(void)param;
@@ -230,16 +322,28 @@ static DWORD WINAPI EventsThreadProc(LPVOID param) {
 		0, 0, 0, 0, NULL, NULL, events_instance, NULL);
 	if (events_window == NULL)
 		events_startup_err = GetLastError();
+	EventLog("EventsThread: window=0x%X err=%lu", events_window, events_startup_err);
 	SetEvent(events_ready);
 
 	if (events_window == NULL)
 		return 1;
 
-	while (GetMessage(&msg, NULL, 0, 0) > 0) {
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
+	for (;;) {
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+			if (msg.message == WM_QUIT)
+				goto done;
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+		if (events_stop)
+			break;
+		/* Sleep until a message arrives; never hot-spin. */
+		if (!WaitMessage())
+			Sleep(10);
 	}
 
+done:
+	EventLog("EventsThread: exit stop=%d wnd=0x%X", (int)events_stop, events_window);
 	/* Tear down our own window; class/mutex are handled by CleanupEvents. */
 	DestroyWindow(events_window);
 	events_window = NULL;
@@ -250,10 +354,12 @@ int StartupEvents() {
 	HANDLE thread;
 	DWORD tid;
 
+	EventLog("StartupEvents: begin");
 	/* Do not create owned mutex: first waiter must not inherit ownership. */
 	events_mutex = CreateMutex(NULL, FALSE, NULL);
 	if (events_mutex == NULL)
 		return GetLastError();
+	EventLog("StartupEvents: after CreateMutex");
 
 	// In order to receive WSAAsync events we need a window to receive those
 	// messages. HWND_MESSAGE didn't exist on NT 3.51 so we create an
@@ -294,7 +400,7 @@ int StartupEvents() {
 	}
 	events_startup_err = 0;
 	events_window = NULL;
-
+	InterlockedExchange((LPLONG)&events_stop, 0);
 	thread = CreateThread(NULL, 0, EventsThreadProc, NULL, 0, &tid);
 	if (thread == NULL) {
 		DWORD err = GetLastError();
@@ -309,12 +415,25 @@ int StartupEvents() {
 	CloseHandle(events_ready);
 	events_ready = NULL;
 
-	if (events_startup_err != 0) {
+	if (events_startup_err != 0 || events_window == NULL) {
+		/* Never report success with no window: the app would proceed
+		 * straight into WSANOTINITIALISED failures later. */
+		if (events_startup_err == 0)
+			events_startup_err = ERROR_GEN_FAILURE;
+		EventLog("StartupEvents: FAILED err=%lu wnd=0x%X", events_startup_err, events_window);
+		/* Helper is pumping an empty loop (or already gone); stop it. */
+		PostThreadMessage(tid, WM_QUIT, 0, 0);
+		WaitForSingleObject(thread, 5000);
 		CloseHandle(thread);
 		CloseHandle(events_mutex);
 		events_mutex = NULL;
-		return events_startup_err;
+		{
+			DWORD err = events_startup_err;
+			events_startup_err = 0;
+			return err;
+		}
 	}
+	EventLog("StartupEvents: ok wnd=0x%X helper=%lu", events_window, tid);
 
 	/* Hand over ownership; CleanupEvents() will stop the thread. */
 	events_thread = thread;
@@ -324,11 +443,16 @@ int StartupEvents() {
 }
 
 int CleanupEvents() {
+	EventLog("CleanupEvents: enter wnd=0x%X thr=0x%X", events_window, events_thread);
 	/* Stop the helper thread first so no more messages arrive. */
 	if (events_thread != NULL) {
-		/* The thread owns the window and destroys it before exiting. */
+		/* Signal stop first (owns the loop condition), then wake the
+		 * thread in case it is parked inside WaitMessage. */
+		InterlockedExchange((LPLONG)&events_stop, 1);
+		PostThreadMessage(events_thread_id, WM_NULL, 0, 0);
 		PostThreadMessage(events_thread_id, WM_QUIT, 0, 0);
-		WaitForSingleObject(events_thread, 5000);
+		if (WaitForSingleObject(events_thread, 5000) != WAIT_OBJECT_0)
+			EventLog("CleanupEvents: helper join TIMEOUT");
 		CloseHandle(events_thread);
 		events_thread = NULL;
 		events_thread_id = 0;

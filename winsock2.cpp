@@ -7,17 +7,29 @@
 #include "winsock2.h"
 #include "events.h"
 
-#ifdef _DEBUG
+#if defined(_DEBUG) || defined(DEBUG)
+/* Debug builds append a trace to %TEMP%\WINSOCK351.LOG (printf would corrupt
+ * console apps like plink whose stdout carries session data). */
 void DebugLog(const char* fmt, ...) {
 	va_list args;
-	char* buf;
+	char buf[256];
+	char tmp[MAX_PATH];
+	char path[MAX_PATH];
+	FILE* f;
 	va_start(args, fmt);
-	buf = new char[256];
-	_vsnprintf(buf, 255, fmt, args);
-	buf[255] = '\0';
+	_vsnprintf(buf, sizeof(buf) - 1, fmt, args);
+	buf[sizeof(buf) - 1] = '\0';
 	va_end(args);
-	MessageBox(NULL, buf, "WINSOCK351", 0);
-	delete[] buf;
+	tmp[0] = '\0';
+	if (GetTempPath(sizeof(tmp), tmp) == 0 || tmp[0] == '\0')
+		strcpy(tmp, ".\\");
+	_snprintf(path, sizeof(path) - 1, "%sWINSOCK351.LOG", tmp);
+	path[sizeof(path) - 1] = '\0';
+	f = fopen(path, "a");
+	if (f != NULL) {
+		fprintf(f, "[%lu] %s\n", GetTickCount(), buf);
+		fclose(f);
+	}
 }
 #else
 #define DebugLog (void)0
@@ -175,14 +187,19 @@ int WSAAPI WINSOCK351_WSAEnumNetworkEvents(SOCKET s, WSAEVENT hEventObject, LPWS
 	/* ...and reset the event object if supplied. */
 	if (hEventObject != NULL && hEventObject != WSA_INVALID_EVENT)
 		ResetEvent(hEventObject);
+	DebugLog("WSAEnumNetworkEvents: socket: %d events=0x%X", s, data.lNetworkEvents);
 	return 0;
 }
 
 int WSAAPI WINSOCK351_WSAEventSelect(SOCKET s, WSAEVENT hEventObject, long lNetworkEvents) {
+	UINT id;
 	UINT msg;
 	WSAEventData zero;
-	DebugLog("WSAEventSelect: socket: %d, lNetworkEvents: 0x%X", s, lNetworkEvents);
+	int rc;
+	DebugLog("WSAEventSelect: sock=%d mask=0x%X tid=%lu wnd=0x%X",
+		s, lNetworkEvents, GetCurrentThreadId(), GetEventsWindow());
 	if (GetEventsWindow() == NULL) {
+		DebugLog("WSAEventSelect: socket: %d no window (WSANOTINITIALISED)", s);
 		WSASetLastError(WSANOTINITIALISED);
 		return SOCKET_ERROR;
 	}
@@ -193,22 +210,38 @@ int WSAAPI WINSOCK351_WSAEventSelect(SOCKET s, WSAEVENT hEventObject, long lNetw
 			return SOCKET_ERROR;
 		}
 		DeleteEventData(s);
-		return WSAAsyncSelect(s, GetEventsWindow(), 0, 0);
+		rc = WSAAsyncSelect(s, GetEventsWindow(), 0, 0);
+		DebugLog("WSAEventSelect: cancel socket: %d rc=%d err=%d",
+			s, rc, rc == SOCKET_ERROR ? WSAGetLastError() : 0);
+		return rc;
 	}
 	if (lNetworkEvents == 0) {
 		/* Still need valid message for WSAAsyncSelect cancel path. */
 		DeleteEventData(s);
-		return WSAAsyncSelect(s, GetEventsWindow(), 0, 0);
+		rc = WSAAsyncSelect(s, GetEventsWindow(), 0, 0);
+		DebugLog("WSAEventSelect: cancel socket: %d rc=%d err=%d",
+			s, rc, rc == SOCKET_ERROR ? WSAGetLastError() : 0);
+		return rc;
 	}
-	/* HANDLE values must fit in a user message number. */
-	msg = WM_USER + ((UINT)hEventObject);
-	if (msg <= (UINT)WM_USER || msg >= 0x7FFF) {
-		WSASetLastError(WSAEINVAL);
+	/* Map the event to a small message id (HANDLE values may exceed the
+	 * user-message range, e.g. NT 3.51). */
+	id = EventMsgIdForHandle(hEventObject);
+	if (id == 0) {
+		WSASetLastError(WSAENOBUFS);
+		DebugLog("WSAEventSelect: socket: %d out of message ids", s);
 		return SOCKET_ERROR;
 	}
+	msg = WM_USER + id;
 	memset(&zero, 0, sizeof(zero));
 	SetEventData(s, zero);
-	return WSAAsyncSelect(s, GetEventsWindow(), msg, lNetworkEvents);
+	DebugLog("WSAEventSelect: socket: %d calling WSAAsyncSelect hwnd=0x%X msg=0x%X mask=0x%X",
+		s, GetEventsWindow(), msg, lNetworkEvents);
+	rc = WSAAsyncSelect(s, GetEventsWindow(), msg, lNetworkEvents);
+	DebugLog("WSAEventSelect: socket: %d msg=0x%X rc=%d err=%d",
+		s, msg, rc, rc == SOCKET_ERROR ? WSAGetLastError() : 0);
+	if (rc == SOCKET_ERROR)
+		DeleteEventData(s); /* restore pre-call state for Enum */
+	return rc;
 }
 
 int WSAAPI WINSOCK351_WSAIoctl(
@@ -241,9 +274,8 @@ static int VersionCompare(WORD a, WORD b) {
 
 int WSAAPI WINSOCK351_WSAStartup(WORD wVersionRequested, LPWSADATA lpWSAData) {
 	int err;
-	LONG ref;
 	WORD wVersionToRequest;
-	DebugLog("WSAStartup: 0x%X", wVersionRequested);
+	DebugLog("WSAStartup: req=0x%X tid=%lu", wVersionRequested, GetCurrentThreadId());
 	if (lpWSAData == NULL) {
 		WSASetLastError(WSAEFAULT);
 		return WSAEFAULT;
@@ -255,11 +287,16 @@ int WSAAPI WINSOCK351_WSAStartup(WORD wVersionRequested, LPWSADATA lpWSAData) {
 	wVersionToRequest = wVersionRequested;
 	if (VersionCompare(wVersionRequested, MAKEWORD(1, 1)) > 0)
 		wVersionToRequest = MAKEWORD(1, 1);
+	DebugLog("WSAStartup: req=0x%X passing down=0x%X", wVersionRequested, wVersionToRequest);
 	err = WSAStartup(wVersionToRequest, lpWSAData);
-	if (err != 0)
+	if (err != 0) {
+		DebugLog("WSAStartup: underlying failed err=%d", err);
 		return err;
-	ref = InterlockedIncrement(&g_startup_ref);
-	if (ref == 1) {
+	}
+	/* NOTE: do not use InterlockedIncrement's return value (see WSACleanup).
+	 * Compare the variable itself. */
+	InterlockedIncrement(&g_startup_ref);
+	if (g_startup_ref == 1) {
 		err = StartupEvents();
 		if (err != 0) {
 			InterlockedDecrement(&g_startup_ref);
@@ -273,19 +310,24 @@ int WSAAPI WINSOCK351_WSAStartup(WORD wVersionRequested, LPWSADATA lpWSAData) {
 	/* Some apps also check wHighVersion; never report less than asked for. */
 	if (VersionCompare(lpWSAData->wHighVersion, wVersionRequested) < 0)
 		lpWSAData->wHighVersion = wVersionRequested;
+	DebugLog("WSAStartup: ok wnd=0x%X", GetEventsWindow());
 	return 0;
 }
 
 int WSAAPI WINSOCK351_WSACleanup() {
 	int err;
-	LONG ref;
-	DebugLog("WSACleanup");
+	DebugLog("WSACleanup: tid=%lu ref=%d", GetCurrentThreadId(), g_startup_ref);
 	err = WSACleanup();
 	if (err != 0)
 		return err;
-	ref = InterlockedDecrement(&g_startup_ref);
-	if (ref <= 0) {
-		if (ref < 0)
+	/* NOTE: do not use InterlockedDecrement's return value. On Win32s /
+	 * early NT it was observed returning 0 (stale/previous value) instead
+	 * of the decremented value, which broke the refcounting. Re-read the
+	 * variable instead; the Interlocked call is a full barrier, so the
+	 * plain read is safe on x86. */
+	InterlockedDecrement(&g_startup_ref);
+	if (g_startup_ref <= 0) {
+		if (g_startup_ref < 0)
 			InterlockedIncrement(&g_startup_ref);
 		else {
 			CleanupEvents();

@@ -30,6 +30,12 @@ void SetEventData(SOCKET socket, const WSAEventData& data);
 int GetEventData(SOCKET socket, WSAEventData* data);
 void ResetEventData(SOCKET socket);
 void DeleteEventData(SOCKET socket);
+/* Small-integer message IDs for WSAAsyncSelect. HANDLE values (hence
+ * WM_USER+HANDLE) can exceed the user-message range on some systems;
+ * these map each WSAEVENT to a small dense id instead. Ids are never
+ * reused (table holds at most MAX_EVENT_MSGIDS distinct events). */
+UINT EventMsgIdForHandle(WSAEVENT hEvent);
+WSAEVENT EventHandleForMsgId(UINT id);
 void SetEventsInstance(HINSTANCE hinstance);
 HWND GetEventsWindow();
 int StartupEvents();
