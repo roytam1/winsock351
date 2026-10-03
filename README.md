@@ -76,7 +76,7 @@ In order to use this library, you can simply drop it on the same path as the tar
 
 ## Build requirements
 
-At the moment Visual C++ 6.0 is required to build the project, but Visual C++ 4.2 support may be considered in the future.
+Visual C++ 4.2 is used to build the project.
 
 ## Debugging
 

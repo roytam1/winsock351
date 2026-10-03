@@ -354,12 +354,10 @@ int StartupEvents() {
 	HANDLE thread;
 	DWORD tid;
 
-	EventLog("StartupEvents: begin");
 	/* Do not create owned mutex: first waiter must not inherit ownership. */
 	events_mutex = CreateMutex(NULL, FALSE, NULL);
 	if (events_mutex == NULL)
 		return GetLastError();
-	EventLog("StartupEvents: after CreateMutex");
 
 	// In order to receive WSAAsync events we need a window to receive those
 	// messages. HWND_MESSAGE didn't exist on NT 3.51 so we create an
